@@ -1,0 +1,275 @@
+#----------------INPUT CONFIGURATION---------------------
+default_in: postgresql
+in:
+  postgresql:
+    driver: pgxpool-trigger
+    host: localhost
+    port: 9014
+    username: lalliance-prod
+    password: TZX2JjuHWBcxWIB5R5EzZg
+    database: lalliance-prod
+
+#----------------OUTPUT CONFIGURATION---------------------
+default_out: [ elasticsearch ]
+out:
+  elasticsearch:
+    driver: elastic
+    endpoints: [ "http://localhost:9020" ]
+    username:
+    password:
+    prefix:
+
+#----------------MAPPING CONFIGURATION-----------------------
+
+cityMapping: &cityMapping
+  fields:
+    - slug
+    - name
+    - insee
+    - alias: center
+      script: "ARRAY[ST_X({{table}}.center::geometry),ST_Y({{table}}.center::geometry)]"
+  relations:
+    - table: departments
+      name: department
+      type: one_to_one
+      foreign_key:
+        local: id
+        parent: department_id
+      fields: [ "name", "code", "slug" ]
+#    - name: slugs
+#      table: city_slugs
+#      fields: ['slug','is_canonical']
+#      type: one_to_many
+#      foreign_key:
+#        local: city_id
+#        parent: id
+
+clientMapping: &clientMapping
+  fields: &clientMappingFields
+    - external_reference
+    - name
+    - phone
+    - website
+    - logo
+    - email
+    - id
+    - annuaire
+    - active
+    - description
+  relations:
+    - name: type
+      table: client_types
+      type: one_to_one
+      foreign_key:
+        local: id
+        parent: client_type_id
+      fields: [ "name", "slug" ]
+    - name: city
+      table: cities
+      type: one_to_one
+      foreign_key:
+        local: id
+        parent: city_id
+      <<: *cityMapping
+    - name: websites
+      table: websites
+      type: many_to_many
+      fields: [ 'code' ]
+      foreign_key:
+        local: id
+        parent: id
+        pivot_local: client_id
+        pivot_table: client_website
+        pivot_fields: [ 'can_export' ]
+        pivot_related: website_id
+
+    - name: parent
+      table: clients
+      type: one_to_one
+      foreign_key:
+        local: id
+        parent: parent_id
+      fields: *clientMappingFields
+      relations:
+        - name: parent
+          table: clients
+          type: one_to_one
+          foreign_key:
+            local: id
+            parent: parent_id
+          fields: *clientMappingFields
+
+mappings:
+  - name: cities
+    table: cities
+    chunk_size: 2500
+    settings:
+      mappings:
+        properties:
+          center: { type: geo_point }
+    <<: *cityMapping
+    relations:
+      - name: distributions
+        table: distributions
+        fields: [ 'slug','forwarding','zip_code' ]
+        type: one_to_many
+        foreign_key:
+          local: city_id
+          parent: id
+      - name: slugs
+        table: city_slugs
+        fields: [ 'slug','is_canonical' ]
+        type: one_to_many
+        foreign_key:
+          local: city_id
+          parent: id
+      - table: departments
+        name: department
+        type: one_to_one
+        foreign_key:
+          local: id
+          parent: department_id
+        fields: [ "name", "code", "slug" ]
+
+  - name: clients
+    table: clients
+    chunk_size: 2500
+    settings:
+      mappings:
+        properties:
+          city.center: { type: geo_point }
+    <<: *clientMapping
+
+  - name: annonces
+    table: annonces
+    chunk_size: 10000
+    wheres:
+      - column: deleted_at
+        condition: IS NULL
+
+      - column: published
+        condition: IS TRUE
+    settings:
+      mappings:
+        properties:
+          city.center: { type: geo_point }
+          client.city.center: { type: geo_point }
+          client.websites: { type: nested }
+    # id_column: id # @TODO Default to id
+    fields: [
+      "id",
+      "external_reference",
+      "libelle",
+      "description",
+      "surface",
+      "price",
+      "price_land",
+      "published",
+      "published_at",
+      "created_at",
+      "social",
+      "cellar",
+      "type_investissement",
+      "additional_contact_email",
+      "address",
+      "alarm",
+      "anru",
+      "availability_date",
+      "anru",
+      "brs",
+      "construction_year",
+      "elevator",
+      "exclusivity",
+      "external_zip_code",
+      "floor",
+      "hlm",
+      "ptz",
+      "intercom",
+      "interior_condition",
+      "leasehold_rights",
+      "lmnp",
+      "monthly_fees",
+      "nbr_balconies",
+      "nbr_bathrooms",
+      "nbr_bedrooms",
+      "nbr_boxes",
+      "nbr_floors",
+      "nbr_kitchens",
+      "nbr_parkings",
+      "nbr_rooms",
+      "pinel",
+      "price_house",
+      "property_tax",
+      "proximity",
+      "psla",
+      "rent_monthly",
+      "slugged_external_reference",
+      "surface_balconies",
+      "surface_house",
+      "surface_land",
+      "surface_living_area",
+      "surface_living_room",
+      "swimming_pool",
+      "terrace",
+      "tva10",
+      "tva5",
+      "tva7",
+      "type_achat",
+    ]
+    relations:
+      - name: type
+        table: annonce_types
+        type: one_to_one
+        foreign_key:
+          local: id
+          parent: type_id
+        fields: [ "name", "slug" ]
+        relations: &annonceTypeRelations
+          - name: websites
+            table: websites
+            type: many_to_many
+            fields: [ 'code' ]
+            foreign_key:
+              local: id
+              parent: id
+              pivot_local: annonce_type_id
+              pivot_table: annonce_type_website
+              pivot_related: website_id
+      - name: city
+        table: cities
+        type: one_to_one
+        foreign_key:
+          local: id
+          parent: city_id
+        <<: *cityMapping
+      - name: client
+        table: clients
+        type: one_to_one
+        foreign_key:
+          local: id
+          parent: client_id
+        <<: *clientMapping
+  - name: barometers
+    table: barometers
+    chunk_size: 2500
+    settings:
+      mappings:
+        properties:
+          city.center: { type: geo_point }
+    fields: [ 'sum_price','sum_surface','type_investissement','price_m2','date' ]
+    relations:
+      - name: type
+        table: annonce_types
+        type: one_to_one
+        foreign_key:
+          local: id
+          parent: annonce_type_id
+        fields: [ "name", "slug" ]
+        relations: *annonceTypeRelations
+      - name: city
+        table: cities
+        type: one_to_one
+        foreign_key:
+          local: id
+          parent: city_id
+        <<: *cityMapping
